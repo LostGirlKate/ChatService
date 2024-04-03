@@ -6,7 +6,7 @@ class ChatService {
     private val messageList = mutableListOf<Message>()
 
     private val <E : ObjectWithId> MutableList<E>.maxId: Int
-        get() = if (this.size > 0) this.maxOf { it.id } else 0
+        get() = this.maxOfOrNull { it.id } ?: 0
 
     private fun <E : ObjectWithId> MutableList<E>.getObjectById(id: Int): E {
         return this.first { it.id == id }
@@ -17,49 +17,54 @@ class ChatService {
     }
 
     private fun checkUsers(userIdFirst: Int, userIdSecond: Int = 0) {
-        if (!userList.checkObjectById(userIdFirst)) throw UserNotFoundException("Пользователь id $userIdFirst не найден")
-        if (userIdSecond > 0 && !userList.checkObjectById(userIdSecond)) throw UserNotFoundException("Пользователь id $userIdSecond не найден")
+        userList.singleOrNull { it.id == userIdFirst }
+            .let { it?.id ?: throw UserNotFoundException("Пользователь id $userIdFirst не найден") }
+        if (userIdSecond > 0)
+            userList.singleOrNull { it.id == userIdSecond }
+                .let { it?.id ?: throw UserNotFoundException("Пользователь id $userIdSecond не найден") }
     }
 
     private fun checkUserInChat(userId: Int, chatId: Int) {
-        if (!chatList.getObjectById(chatId).users.checkObjectById(userId)) throw UserNotInThisChatException(
-            "Пользователь id $userId не имеет доступа к чату id $chatId"
-        )
+        chatList.singleOrNull { chatId == it.id && it.users.checkObjectById(userId) }
+            .let {
+                it?.id ?: throw UserNotInThisChatException(
+                    "Пользователь id $userId не имеет доступа к чату id $chatId"
+                )
+            }
     }
 
     private fun checkChat(chatId: Int) {
-        if (!chatList.checkObjectById(chatId)) throw ChatNotFoundException("Чат не найден id: $chatId")
+        chatList.singleOrNull { it.id == chatId }
+            .let { it?.id ?: throw ChatNotFoundException("Чат не найден id: $chatId") }
     }
 
     private fun checkMessage(messageId: Int) {
-        if (!messageList.checkObjectById(messageId)) throw MessageNotFoundException("Сообщение не найдено id: $messageId")
-
+        messageList.singleOrNull { it.id == messageId }
+            .let { it?.id ?: throw MessageNotFoundException("Сообщение не найдено id: $messageId") }
     }
 
     private fun getChatIdByUsers(userIdFirst: Int, userIdSecond: Int): Int {
-        if (!chatList.any { it.users.checkObjectById(userIdFirst) && it.users.checkObjectById(userIdSecond) })
-            throw ChatNotFoundException("Чат не найден userId: $userIdFirst currentUserID: $userIdSecond")
-
-        return chatList.first { it.users.checkObjectById(userIdFirst) && it.users.checkObjectById(userIdSecond) }.id
+        return chatList.singleOrNull { it.users.checkObjectById(userIdFirst) && it.users.checkObjectById(userIdSecond) }
+            .let {
+                it?.id ?: throw ChatNotFoundException("Чат не найден userId: $userIdFirst currentUserID: $userIdSecond")
+            }
     }
 
 
     private fun createChatIfNotExist(author: User, user: User): Int {
-        if (!chatList.any { it.users.checkObjectById(author.id) && it.users.checkObjectById(user.id) }) {
-            chatList.add(Chat("${author.name} && ${user.name}", chatList.maxId + 1, mutableListOf(author, user)))
-            return chatList.last().id
-        } else {
-            return chatList.first { it.users.checkObjectById(author.id) && it.users.checkObjectById(user.id) }.id
-        }
-
+        return chatList.firstOrNull { it.users.checkObjectById(author.id) && it.users.checkObjectById(user.id) }?.id
+            ?: run {
+                chatList.add(Chat("${author.name} && ${user.name}", chatList.maxId + 1, mutableListOf(author, user)))
+                chatList.last().id
+            }
     }
 
     private fun messageByID(messageId: Int, currentUserId: Int): Message {
         checkMessage(messageId)
         val message = messageList.getObjectById(messageId)
         checkUsers(currentUserId)
-        checkChat(message.chatId)
         checkUserInChat(currentUserId, message.chatId)
+        checkChat(message.chatId)
         return message
     }
 
@@ -81,8 +86,8 @@ class ChatService {
         checkUsers(currentUserId, toUserId)
         val author = userList.getObjectById(currentUserId)
         val toUser = userList.getObjectById(toUserId)
-        val chat = chatList.getObjectById(createChatIfNotExist(author, toUser))
-        messageList.add(Message(chat.id, text, author, messageList.maxId + 1))
+        val chatId = createChatIfNotExist(author, toUser)
+        messageList.add(Message(chatId, text, author, messageList.maxId + 1))
         return messageList.last().id
     }
 
@@ -106,30 +111,30 @@ class ChatService {
 
     fun getLastMessagesInChats(currentUserId: Int): Map<Int, String> {
         checkUsers(currentUserId)
-        val resultMap = mutableMapOf<Int, String>()
-        chatList.filter { it.users.checkObjectById(currentUserId) }.forEach { chat ->
-            if (messageList.none { it.chatId == chat.id })
-                resultMap[chat.id] = "нет сообщений"
-            else
-                resultMap[chat.id] = messageList.filter { it.chatId == chat.id }.maxByOrNull { it.dateCreated }!!.text
-        }
-        return resultMap
+        return chatList.asSequence()
+            .filter { it.users.checkObjectById(currentUserId) }
+            .associate { chat ->
+                Pair(chat.id,
+                    messageList.filter { it.chatId == chat.id }
+                        .maxByOrNull { it.dateCreated }?.text ?: "нет сообщений"
+                )
+            }
     }
 
     fun getMessagesListInChat(userId: Int, currentUserId: Int, count: Int = 10): List<Message> {
         checkUsers(currentUserId, userId)
         val chatId = getChatIdByUsers(userId, currentUserId)
-        if (!messageList.any { it.chatId == chatId })
-            return listOf()
-        else {
-            val lastShowIndex =
-                if (count > 0 && count <= messageList.filter { it.chatId == chatId }.size) count - 1 else messageList.filter { it.chatId == chatId }.lastIndex
-            val resultList = messageList.filter { it.chatId == chatId }.sortedByDescending { it.dateCreated }
-                .slice(0..lastShowIndex)
-            messageList.filter { it.chatId == chatId }.sortedByDescending { it.dateCreated }
-                .slice(0..lastShowIndex).forEach { if (it.author.id != currentUserId) it.isRead = true }
-            return resultList
-        }
+        messageList.asSequence()
+            .filter { it.chatId == chatId }
+            .sortedByDescending { it.dateCreated }
+            .take(count)
+            .forEach { if (it.author.id != currentUserId) it.isRead = true }
+        return messageList.asSequence()
+            .filter { it.chatId == chatId }
+            .sortedByDescending { it.dateCreated }
+            .take(count)
+            .ifEmpty { listOf<Message>().asSequence() }
+            .toList()
     }
 
 
@@ -137,10 +142,7 @@ class ChatService {
         checkUsers(currentUserId)
         return chatList.filter { chat ->
             chat.users.checkObjectById(currentUserId)
-                    && messageList.any {
-                it.chatId == chat.id
-                        && !it.isRead
-            }
+                    && messageList.any { it.chatId == chat.id && !it.isRead }
         }.size
     }
 

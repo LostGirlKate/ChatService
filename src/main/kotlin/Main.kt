@@ -26,6 +26,7 @@ fun main() {
     val currentUser = service.createUser("Пользователь 1")
     val user1 = service.createUser("Пользователь 2")
     val user2 = service.createUser("Пользователь .3")
+    val user3 = service.createUser("Пользователь 4")
     service.createMessage("Привет", currentUser, user1)
     service.createMessage("Привет2", currentUser, user1)
     service.createMessage("Привет3", currentUser, user2)
@@ -35,7 +36,8 @@ fun main() {
     service.createMessage("Привет7", currentUser, user2)
     service.deleteMessage(1,currentUser)
     service.deleteMessage(2,currentUser)
-    println(service.getMessagesListInChat(user2, currentUser))
+    println(service.getMessagesListInChat(user2, currentUser,1))
+    println(service.getMessagesListInChat(user1, currentUser,1))
     println(service.getLastMessagesInChats(currentUser))
 
 }
